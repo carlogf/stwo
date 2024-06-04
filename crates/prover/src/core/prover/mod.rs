@@ -1,12 +1,14 @@
 use itertools::Itertools;
+use rayon::prelude::*;
 use thiserror::Error;
 use tracing::{span, Level};
 
 use super::air::AirProver;
-use super::backend::Backend;
+use super::backend::{Backend, ColumnOps};
+use super::fields::m31::M31;
 use super::fri::FriVerificationError;
 use super::pcs::{CommitmentSchemeProof, TreeVec};
-use super::poly::circle::{CanonicCoset, SecureCirclePoly, MAX_CIRCLE_DOMAIN_LOG_SIZE};
+use super::poly::circle::{CanonicCoset, PolyOps, SecureCirclePoly, MAX_CIRCLE_DOMAIN_LOG_SIZE};
 use super::poly::twiddles::TwiddleTree;
 use super::proof_of_work::ProofOfWorkVerificationError;
 use super::ColumnVec;
@@ -53,10 +55,15 @@ pub fn evaluate_and_commit_on_trace<B: Backend + MerkleOps<MerkleHasher>>(
     channel: &mut Channel,
     twiddles: &TwiddleTree<B>,
     trace: ColumnVec<CircleEvaluation<B, BaseField, BitReversedOrder>>,
-) -> Result<CommitmentSchemeProver<B>, ProvingError> {
+) -> Result<CommitmentSchemeProver<B>, ProvingError>
+where
+    CircleEvaluation<B, BaseField, BitReversedOrder>: Sized + Send + Sync,
+    <B as ColumnOps<M31>>::Column: Send + Sync,
+    <B as PolyOps>::Twiddles: Send + Sync 
+{
     let span = span!(Level::INFO, "Trace interpolation").entered();
     let trace_polys = trace
-        .into_iter()
+        .into_par_iter()
         .map(|poly| poly.interpolate_with_twiddles(twiddles))
         .collect();
     span.exit();
@@ -125,11 +132,17 @@ pub fn generate_proof<B: Backend + MerkleOps<MerkleHasher>>(
     })
 }
 
-pub fn prove<B: Backend + MerkleOps<MerkleHasher>>(
+pub fn prove<B>(
     air: &impl AirProver<B>,
     channel: &mut Channel,
     trace: ColumnVec<CircleEvaluation<B, BaseField, BitReversedOrder>>,
-) -> Result<StarkProof, ProvingError> {
+) -> Result<StarkProof, ProvingError> 
+    where
+    CircleEvaluation<B, BaseField, BitReversedOrder>: Sized + Send + Sync,
+    <B as ColumnOps<M31>>::Column: Send + Sync,
+    <B as PolyOps>::Twiddles: Send + Sync, 
+    B: Backend + MerkleOps<MerkleHasher> 
+        {
     // Check that traces are not too big.
     for (i, trace) in trace.iter().enumerate() {
         if trace.domain.log_size() + LOG_BLOWUP_FACTOR > MAX_CIRCLE_DOMAIN_LOG_SIZE {
