@@ -253,7 +253,7 @@ mod tests {
 
         // Note: 17 means 128MB of trace.
         const LOG_N_ROWS: u32 = 16;
-        let component = WideFibComponent {
+        let component = SimdWideFibComponent {
             log_fibonacci_size: LOG_N_COLUMNS as u32,
             log_n_instances: LOG_N_ROWS,
         };
