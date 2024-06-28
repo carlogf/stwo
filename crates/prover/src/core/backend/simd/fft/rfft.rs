@@ -12,6 +12,8 @@ use crate::core::backend::simd::m31::{PackedBaseField, LOG_N_LANES};
 use crate::core::circle::Coset;
 use crate::core::utils::bit_reverse;
 
+use rayon::prelude::*;
+
 /// Performs a Circle Fast Fourier Transform (CFFT) on the given values.
 ///
 /// # Arguments
@@ -215,6 +217,20 @@ unsafe fn fft_vecwise_loop(
     }
 }
 
+
+
+// thin wrapper over pointer to make it Send/Sync
+#[derive(Copy, Clone)]
+struct Pointer(*const u32);
+unsafe impl Send for Pointer {}
+unsafe impl Sync for Pointer {}
+
+#[derive(Copy, Clone)]
+struct MutPointer(*mut u32);
+unsafe impl Send for MutPointer {}
+unsafe impl Sync for MutPointer {}
+
+
 /// Runs 3 fft layers across the entire array.
 ///
 /// # Arguments
@@ -238,13 +254,21 @@ unsafe fn fft3_loop(
     layer: usize,
     index_h: usize,
 ) {
-    for index_l in 0..1 << loop_bits {
+
+    let wrapped_src = Pointer(src);
+    let wrapped_dst = MutPointer(dst);
+
+    (0..1<<loop_bits).collect::<Vec<_>>().par_iter().for_each(|index_l|{
+    // for index_l in 0..1 << loop_bits {
         let index = (index_h << loop_bits) + index_l;
         let offset = index << (layer + 3);
+        let unwrapped_src = {wrapped_src}.0;
+        let unwrapped_dst = {wrapped_dst}.0;
+
         for l in (0..1 << layer).step_by(1 << LOG_N_LANES as usize) {
             fft3(
-                src,
-                dst,
+                unwrapped_src,
+                unwrapped_dst,
                 offset + l,
                 layer,
                 array::from_fn(|i| {
@@ -258,7 +282,7 @@ unsafe fn fft3_loop(
                 }),
             );
         }
-    }
+    });
 }
 
 /// Runs 2 fft layers across the entire array.
